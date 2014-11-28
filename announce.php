@@ -80,10 +80,10 @@ if ($_GET['port'] == 999 && substr($_GET['peer_id'], 0, 10) == '-TO0001-XX') {
 	die("d8:completei0e10:incompletei0e8:intervali600e12:min intervali60e5:peersld2:ip12:72.14.194.184:port3:999ed2:ip11:72.14.194.14:port3:999ed2:ip12:72.14.194.654:port3:999eee");
 }
 
-mysql_query('INSERT INTO `peer` (`hash`, `user_agent`, `ip_address`, `key`, `port`) '
+mysql_query('INSERT INTO `peer` (`peer_id`, `user_agent`, `ip_address`, `key`, `port`) '
 	. "VALUES ('" . mysql_real_escape_string(bin2hex($_GET['peer_id'])) . "', '" . mysql_real_escape_string(substr($_SERVER['HTTP_USER_AGENT'], 0, 80)) 
 	. "', INET_ATON('" . mysql_real_escape_string($_SERVER['REMOTE_ADDR']) . "'), '" . mysql_real_escape_string(sha1($_GET['key'])) . "', " . intval($_GET['port']) . ") "
-	. 'ON DUPLICATE KEY UPDATE `user_agent` = VALUES(`user_agent`), `ip_address` = VALUES(`ip_address`), `port` = VALUES(`port`), `id` = LAST_INSERT_ID(`peer`.`id`)') 
+	. 'ON DUPLICATE KEY UPDATE `peer_id`=VALUES(`peer_id`), `user_agent` = VALUES(`user_agent`), `ip_address` = VALUES(`ip_address`), `key`=VALUES(`key`), `port` = VALUES(`port`), `id` = LAST_INSERT_ID(`peer`.`id`)') 
 	or die(track('Cannot update peer: '.mysql_error()));
 $pk_peer = mysql_insert_id();
 
@@ -105,20 +105,22 @@ if (!isset($_GET['left'])) {
 	$_GET['left'] = 0;
 }
 
-mysql_query('INSERT INTO `peer_torrent` (`peer_id`, `torrent_id`, `uploaded`, `downloaded`, `left`, `last_updated`) '
-	. 'SELECT ' . $pk_peer . ', `torrent`.`id`, ' . intval($_GET['uploaded']) . ', ' . intval($_GET['downloaded']) . ', ' . intval($_GET['left']) . ', UTC_TIMESTAMP() '
+$state = 'state';
+$attempt = 'attempt';
+if (isset($_GET['event'])){
+	$state = "'" . $_GET['event'] . "'";
+	$attempt = 'LAST_INSERT_ID(peer_torrent.id)';
+}
+
+mysql_query('INSERT INTO peer_torrent (peer_id, torrent_id, uploaded, downloaded, `left`, state, attempt, `last_updated`) '
+	. 'SELECT ' . $pk_peer . ', `torrent`.`id`, ' . intval($_GET['uploaded']) . ', ' . intval($_GET['downloaded']) . ', ' . intval($_GET['left']) . ', ' . $state .  ', ' . 0 . ', UTC_TIMESTAMP() '
 	. 'FROM `torrent` '
 	. "WHERE `torrent`.`hash` = '" . mysql_real_escape_string(bin2hex($_GET['info_hash'])) . "' "
-	. 'ON DUPLICATE KEY UPDATE `uploaded` = VALUES(`uploaded`), `downloaded` = VALUES(`downloaded`), `left` = VALUES(`left`), `last_updated` = VALUES(`last_updated`), '
-	. '`id` = LAST_INSERT_ID(`peer_torrent`.`id`)')
+	. 'ON DUPLICATE KEY UPDATE `uploaded` = VALUES(`uploaded`), `downloaded` = VALUES(`downloaded`), `left` = VALUES(`left`), ' 
+	. 'state=' . $state . ', attempt=' . $attempt . ', ' 
+	. 'last_updated = VALUES(`last_updated`), ')
 	or die(track(mysql_error()));
 $pk_peer_torrent = mysql_insert_id();
-
-//Did the client stop the torrent?
-if (isset($_GET['event']) && $_GET['event'] === 'stopped') {
-	mysql_query("UPDATE `peer_torrent` SET `stopped` = TRUE WHERE `id` = " . $pk_peer_torrent) or die (track(mysql_error()));
-	die(track(array(), 0, 0)); //The RFC says its OK to return an empty string when stopping a torrent however some clients will whine about it so we return an empty dictionary
-}
 
 $numwant = __MAX_PPR; //Can be modified by client
 
@@ -127,10 +129,10 @@ if (isset($_GET['numwant']) && ctype_digit($_GET['numwant']) && $_GET['numwant']
 	$numwant = (int)$_GET['numwant'];
 }
 
-$q = mysql_query('SELECT INET_NTOA(peer.ip_address), peer.port, peer.hash '
+$q = mysql_query('SELECT INET_NTOA(peer.ip_address), peer.port, peer.peer_id '
 	. 'FROM peer_torrent '
 	. 'JOIN peer ON peer.id = peer_torrent.peer_id '
-	. 'WHERE peer_torrent.torrent_id = ' . $pk_torrent . ' AND peer_torrent.stopped = FALSE '
+	. 'WHERE peer_torrent.torrent_id = ' . $pk_torrent . " AND peer_torrent.state != 'stopped' "
 	. 'AND peer_torrent.last_updated >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ' . (__INTERVAL + __TIMEOUT) . ' SECOND) '
 	. 'AND peer.id != ' . $pk_peer . ' '
 	. 'ORDER BY RAND() '
@@ -144,7 +146,7 @@ while ($r = mysql_fetch_array($q)) { //Runs for every client with the same infoh
 
 $q = mysql_query('SELECT IFNULL(SUM(peer_torrent.left > 0), 0) AS leech, IFNULL(SUM(peer_torrent.left = 0), 0) AS seed '
 	. 'FROM peer_torrent '
-	. 'WHERE peer_torrent.torrent_id = ' . $pk_torrent . ' AND `peer_torrent`.`stopped` = FALSE '
+	. 'WHERE peer_torrent.torrent_id = ' . $pk_torrent . " AND peer_torrent.state != 'stopped' "
 	. 'AND peer_torrent.last_updated >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ' . (__INTERVAL + __TIMEOUT) . ' SECOND) '
 	. 'GROUP BY `peer_torrent`.`torrent_id`') or die(track(mysql_error()));
 
@@ -194,13 +196,5 @@ function valdata($g, $fixed_size=false) {
 	if (strlen($_GET[$g]) > 80) { //128 chars should really be enough
 		die(track('Request too long'));
 	}
-}
-
-function hex2bin($hex) {
-	$r = '';
-	for ($i=0; $i < strlen($hex); $i+=2) {
-		$r .= chr(hexdec($hex{$i}.$hex{($i+1)}));
-	}
-	return $r;
 }
 ?>
