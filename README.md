@@ -1,4 +1,4 @@
-bitstorm
+Bitstorm: A lightweight Bittorrent tracker
 ========
 
 Lightweight bittorrent tracker contained in a single PHP file
