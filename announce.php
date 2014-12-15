@@ -118,8 +118,9 @@ mysql_query('INSERT INTO peer_torrent (peer_id, torrent_id, uploaded, downloaded
 	. "WHERE `torrent`.`hash` = '" . mysql_real_escape_string(bin2hex($_GET['info_hash'])) . "' "
 	. 'ON DUPLICATE KEY UPDATE `uploaded` = VALUES(`uploaded`), `downloaded` = VALUES(`downloaded`), `left` = VALUES(`left`), ' 
 	. 'state=' . $state . ', attempt=' . $attempt . ', ' 
-	. 'last_updated = VALUES(`last_updated`), ')
+	. 'last_updated = VALUES(`last_updated`) ')
 	or die(track(mysql_error()));
+
 $pk_peer_torrent = mysql_insert_id();
 
 $numwant = __MAX_PPR; //Can be modified by client
