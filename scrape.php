@@ -66,7 +66,7 @@ if ($r = mysql_fetch_array($q)) {
 $q = mysql_query('SELECT count(*) '
 		. 'FROM peer_torrent join torrent on peer_torrent.torrent_id = torrent.id '
 		. "WHERE torrent.hash = '" . mysql_real_escape_string(bin2hex($_GET['info_hash']))
-		. "' AND peer_torrent.state = 'complete'") or die(track(mysql_error()));
+		. "' AND peer_torrent.state = 'completed'") or die(track(mysql_error()));
 
 $complete = 0;
 if ($r = mysql_fetch_array($q)) {
@@ -80,6 +80,7 @@ function track($x, $s=0, $l=0, $info_hash) {
 	if (is_string($x)) { //Did we get a string? Return an error to the client
 		return 'd14:failure reason'.strlen($x).':'.$x.'e';
 	}
+	// based on https://wiki.theory.org/BitTorrentSpecification#Tracker_.27scrape.27_Convention
 	$r = 'd5:filesd' . strlen($info_hash) . ':' . $info_hash . 'd8:completei' . $s . 'e10:downloadedi' . $x . 'e10:incompletei' . $l . 'eeee';
 	return $r;
 }
