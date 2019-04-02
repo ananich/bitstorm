@@ -20,12 +20,7 @@
  /*************************
  ** Configuration start **
  *************************/
-
-//MySQL details
-define('__DB_SERVER', '');
-define('__DB_USERNAME', '');
-define('__DB_PASSWORD', '');
-define('__DB_DATABASE', '');
+require 'constants.php';
 
 //Peer announce interval (Seconds)
 define('__INTERVAL', 1800);
@@ -47,28 +42,29 @@ define('__MAX_PPR', 20);
 //Use the correct content-type
 header("Content-type: Text/Plain");
 
-//Connect to the MySQL server
-@mysql_connect(__DB_SERVER, __DB_USERNAME, __DB_PASSWORD) or die(track('Database connection failed'));
+$dbh = new PDO("mysql:host=".__DB_SERVER.";dbname=".__DB_DATABASE, __DB_USERNAME, __DB_PASSWORD) or die(track('Database connection failed'));
 
-//Select the database
-@mysql_select_db(__DB_DATABASE) or die(track('Unable to select database'));
-
-//Inputs that are needed, do not continue without these
-valdata('peer_id', true);
-valdata('port');
-valdata('info_hash', true);
 
 //Make sure we have something to use as a key
 if (!isset($_GET['key'])) {
 	$_GET['key'] = '';
 }
 
-$downloaded = isset($_GET['uploaded']) ? intval($_GET['uploaded']) : 0;
-$uploaded = isset($_GET['uploaded']) ? intval($_GET['uploaded']) : 0;
-$left = isset($_GET['left']) ? intval($_GET['left']) : 0;
-
+//Inputs that are needed, do not continue without these
+valdata('peer_id', true);
+$peerid = $_GET['peer_id'];
+valdata('port');
+$port=intval($_GET['port']);
+valdata('info_hash', true);
+$info_hash=bin2hex($_GET['info_hash']);
 //Validate key as well
 valdata('key');
+$key= sha1($_GET['key']);
+
+$downloaded = isset($_GET['uploaded'])&& is_numeric($_GET['uploaded']) ? intval($_GET['uploaded']) : 0;
+$uploaded = isset($_GET['uploaded'])&& is_numeric($_GET['uploaded']) ? intval($_GET['uploaded']) : 0;
+$left = isset($_GET['left'])&& is_numeric($_GET['uploaded']) ? intval($_GET['left']) : 0;
+
 
 //Do we have a valid client port?
 if (!ctype_digit($_GET['port']) || $_GET['port'] < 1 || $_GET['port'] > 65535) {
@@ -79,49 +75,40 @@ if (!ctype_digit($_GET['port']) || $_GET['port'] < 1 || $_GET['port'] > 65535) {
 if ($_GET['port'] == 999 && substr($_GET['peer_id'], 0, 10) == '-TO0001-XX') {
 	die("d8:completei0e10:incompletei0e8:intervali600e12:min intervali60e5:peersld2:ip12:72.14.194.184:port3:999ed2:ip11:72.14.194.14:port3:999ed2:ip12:72.14.194.654:port3:999eee");
 }
+$user_agent= isset($_SERVER['HTTP_USER_AGENT'])&&is_string($_SERVER['HTTP_USER_AGENT'])?substr($_SERVER['HTTP_USER_AGENT'], 0, 80):"N/A";
+$ipadress=is_string($_SERVER['REMOTE_ADDR'])?$_SERVER['REMOTE_ADDR']:die("Weird ip adress");
 
-mysql_query('INSERT INTO `peer` (`peer_id`, `user_agent`, `ip_address`, `key`, `port`) '
-	. "VALUES ('" . mysql_real_escape_string(bin2hex($_GET['peer_id'])) . "', '" . mysql_real_escape_string(substr($_SERVER['HTTP_USER_AGENT'], 0, 80)) 
-	. "', INET_ATON('" . mysql_real_escape_string($_SERVER['REMOTE_ADDR']) . "'), '" . mysql_real_escape_string(sha1($_GET['key'])) . "', " . intval($_GET['port']) . ") "
-	. 'ON DUPLICATE KEY UPDATE `peer_id`=VALUES(`peer_id`), `user_agent` = VALUES(`user_agent`), `ip_address` = VALUES(`ip_address`), `key`=VALUES(`key`), `port` = VALUES(`port`), `id` = LAST_INSERT_ID(`peer`.`id`)') 
-	or die(track('Cannot update peer: '.mysql_error()));
-$pk_peer = mysql_insert_id();
+$insert_peer=$dbh->prepare('INSERT INTO `peer` (`peer_id`, `user_agent`, `ip_address`, `key`, `port`) '
+	. "VALUES (:peerid, :user_agent, INET_ATON(:ipaddress), :key, :port) "
+	. 'ON DUPLICATE KEY UPDATE `peer_id`=VALUES(`peer_id`), `user_agent` = VALUES(`user_agent`), `ip_address` = VALUES(`ip_address`), `key`=VALUES(`key`), `port` = VALUES(`port`), `id` = LAST_INSERT_ID(`peer`.`id`)');
+$insert_peer->execute(['peerid'=>$peerid,'user_agent'=>$user_agent,'ipaddress'=>$ipadress,'key'=>$key,'port'=>$port]);
 
-mysql_query("INSERT INTO `torrent` (`hash`) VALUES ('" . mysql_real_escape_string(bin2hex($_GET['info_hash'])) . "') "
- 	. "ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`)") or die(track('Cannot update torrent' . mysql_error())); // ON DUPLICATE KEY UPDATE is just to make mysql_insert_id work
-$pk_torrent = mysql_insert_id();
+$pk_peer = $dbh->lastInsertId();
 
-//User agent is required
-if (!isset($_SERVER['HTTP_USER_AGENT'])) {
-	$_SERVER['HTTP_USER_AGENT'] = "N/A";
-}
-if (!isset($_GET['uploaded'])) {
-	$_GET['uploaded'] = 0;
-}
-if (!isset($_GET['downloaded'])) {
-	$_GET['downloaded'] = 0;
-}
-if (!isset($_GET['left'])) {
-	$_GET['left'] = 0;
-}
+$insert_torrent=$dbh->prepare("INSERT INTO `torrent` (`hash`) VALUES (:infohash) "
+ 	. "ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`)"); // ON DUPLICATE KEY UPDATE is just to make mysql_insert_id work
 
+$insert_torrent->execute(['infohash'=>$info_hash]);
+$pk_torrent = $dbh->lastInsertId();
+
+$params=['pkpeer'=>$pk_peer,'uploaded'=>$uploaded,'downloaded'=>$downloaded,'left'=>$left,'infohash'=>$info_hash];
 $state = 'state';
 $attempt = 'attempt';
 if (isset($_GET['event'])){
-	$state = "'" . mysql_real_escape_string($_GET['event']) . "'";
+	$state = ":state";
+        $params['state']=$_GET['event'];
 	$attempt = 'LAST_INSERT_ID(peer_torrent.id)';
 }
-
-mysql_query('INSERT INTO peer_torrent (peer_id, torrent_id, uploaded, downloaded, `left`, attempt, `last_updated`) '
-	. 'SELECT ' . $pk_peer . ', `torrent`.`id`, ' . intval($_GET['uploaded']) . ', ' . intval($_GET['downloaded']) . ', ' . intval($_GET['left']) . ', ' . 0 . ', UTC_TIMESTAMP() '
+$insert_peer_torrent=$dbh->prepare('INSERT INTO peer_torrent (peer_id, torrent_id, uploaded, downloaded, `left`, attempt, `last_updated`) '
+	. 'SELECT :pkpeer, `torrent`.`id`, :uploaded, :downloaded, :left, 0, UTC_TIMESTAMP() '
 	. 'FROM `torrent` '
-	. "WHERE `torrent`.`hash` = '" . mysql_real_escape_string(bin2hex($_GET['info_hash'])) . "' "
+	. "WHERE `torrent`.`hash` = :infohash "
 	. 'ON DUPLICATE KEY UPDATE `uploaded` = VALUES(`uploaded`), `downloaded` = VALUES(`downloaded`), `left` = VALUES(`left`), ' 
 	. 'state=' . $state . ', attempt=' . $attempt . ', ' 
-	. 'last_updated = VALUES(`last_updated`) ')
-	or die(track(mysql_error()));
+	. 'last_updated = VALUES(`last_updated`) ');
+$insert_peer_torrent->execute($params);
 
-$pk_peer_torrent = mysql_insert_id();
+$pk_peer_torrent = $dbh->lastInsertId();
 
 $numwant = __MAX_PPR; //Can be modified by client
 
@@ -130,31 +117,31 @@ if (isset($_GET['numwant']) && ctype_digit($_GET['numwant']) && $_GET['numwant']
 	$numwant = (int)$_GET['numwant'];
 }
 
-$q = mysql_query('SELECT INET_NTOA(peer.ip_address), peer.port, peer.peer_id '
+$select_peer_torrent=$dbh->prepare('SELECT INET_NTOA(peer.ip_address), peer.port, peer.peer_id '
 	. 'FROM peer_torrent '
 	. 'JOIN peer ON peer.id = peer_torrent.peer_id '
-	. 'WHERE peer_torrent.torrent_id = ' . $pk_torrent . " AND peer_torrent.state != 'stopped' "
+	. "WHERE peer_torrent.torrent_id = :pktorrent AND peer_torrent.state != 'stopped' "
 	. 'AND peer_torrent.last_updated >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ' . (__INTERVAL + __TIMEOUT) . ' SECOND) '
-	. 'AND peer.id != ' . $pk_peer . ' '
+	. 'AND peer.id != :pkpeer '
 	. 'ORDER BY RAND() '
-	. 'LIMIT ' . $numwant) or die(track(mysql_error()));
-
+	. 'LIMIT ' . $numwant);
+$select_peer_torrent->execute(['pktorrent'=>$pk_torrent,'pkpeer'=>$pk_peer ]);
 $reply = array(); //To be encoded and sent to the client
 
-while ($r = mysql_fetch_array($q)) { //Runs for every client with the same infohash
+while ($r=$select_peer_torrent->fetch(PDO::FETCH_NUM)) { //Runs for every client with the same infohash
 	$reply[] = array($r[0], $r[1], $r[2]); //ip, port, peerid
 }
 
-$q = mysql_query('SELECT IFNULL(SUM(peer_torrent.left > 0), 0) AS leech, IFNULL(SUM(peer_torrent.left = 0), 0) AS seed '
+$select_peers=$dbh->prepare('SELECT IFNULL(SUM(peer_torrent.left > 0), 0) AS leech, IFNULL(SUM(peer_torrent.left = 0), 0) AS seed '
 	. 'FROM peer_torrent '
-	. 'WHERE peer_torrent.torrent_id = ' . $pk_torrent . " AND peer_torrent.state != 'stopped' "
+	. "WHERE peer_torrent.torrent_id = :pktorrent AND peer_torrent.state != 'stopped' "
 	. 'AND peer_torrent.last_updated >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ' . (__INTERVAL + __TIMEOUT) . ' SECOND) '
-	. 'GROUP BY `peer_torrent`.`torrent_id`') or die(track(mysql_error()));
-
+	. 'GROUP BY `peer_torrent`.`torrent_id`');
+$select_peers->execute(['pktorrent'=>$pk_torrent]);
 $seeders = 0;
 $leechers = 0;
 
-if ($r = mysql_fetch_array($q))
+if ($r = $select_peers->fetch(PDO::FETCH_NUM))
 {
 	$seeders = $r[1];
 	$leechers = $r[0];
@@ -198,4 +185,3 @@ function valdata($g, $fixed_size=false) {
 		die(track('Request too long'));
 	}
 }
-?>
