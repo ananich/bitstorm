@@ -21,11 +21,7 @@
  ** Configuration start **
  *************************/
 
-//MySQL details
-define('__DB_SERVER', '');
-define('__DB_USERNAME', '');
-define('__DB_PASSWORD', '');
-define('__DB_DATABASE', '');
+require 'constants.php';
 
 //Peer announce interval (Seconds)
 define('__INTERVAL', 1800);
@@ -40,36 +36,34 @@ define('__TIMEOUT', 120);
 //Use the correct content-type
 header("Content-type: Text/Plain");
 
-//Connect to the MySQL server
-@mysql_connect(__DB_SERVER, __DB_USERNAME, __DB_PASSWORD) or die(track('Database connection failed'));
-
-//Select the database
-@mysql_select_db(__DB_DATABASE) or die(track('Unable to select database'));
+$dbh = new PDO("mysql:host=".__DB_SERVER.";dbname=".__DB_DATABASE, __DB_USERNAME, __DB_PASSWORD) or die(track('Database connection failed'));
 
 //Inputs that are needed, do not continue without these
 valdata('info_hash', true);
+$params=['infohash'=>bin2hex($_GET['info_hash'])];
 
-$q = mysql_query('SELECT IFNULL(SUM(peer_torrent.left > 0), 0) AS leech, IFNULL(SUM(peer_torrent.left = 0), 0) AS seed '
+$select_peers=$dbh->prepare('SELECT IFNULL(SUM(peer_torrent.left > 0), 0) AS leech, IFNULL(SUM(peer_torrent.left = 0), 0) AS seed '
 		. 'FROM peer_torrent join torrent on peer_torrent.torrent_id = torrent.id '
-		. "WHERE torrent.hash = '" . mysql_real_escape_string(bin2hex($_GET['info_hash'])) . "' AND peer_torrent.state != 'stopped' "
+		. "WHERE torrent.hash = :infohash AND peer_torrent.state != 'stopped' "
 		. 'AND peer_torrent.last_updated >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ' . (__INTERVAL + __TIMEOUT) . ' SECOND) '
-		. 'GROUP BY `peer_torrent`.`torrent_id`') or die(track(mysql_error()));
+		. 'GROUP BY `peer_torrent`.`torrent_id`');
+$select_peers->execute($params);
 
 $seeders = 0;
 $leechers = 0;
 
-if ($r = mysql_fetch_array($q)) {
+if ($r = $select_peers->fetch(PDO::FETCH_NUM)) {
 	$seeders = $r[1];
 	$leechers = $r[0];
 }
 
-$q = mysql_query('SELECT count(*) '
+$select_completed=$dbh->prepare('SELECT count(*) '
 		. 'FROM peer_torrent join torrent on peer_torrent.torrent_id = torrent.id '
-		. "WHERE torrent.hash = '" . mysql_real_escape_string(bin2hex($_GET['info_hash']))
-		. "' AND peer_torrent.state = 'completed'") or die(track(mysql_error()));
-
+		. "WHERE torrent.hash = :infohash"
+		. "' AND peer_torrent.state = 'completed'");
+$select_completed->execute($params);
 $complete = 0;
-if ($r = mysql_fetch_array($q)) {
+if ($r = $select_completed->fetch(PDO::FETCH_NUM)) {
 	$complete = $r[0];
 }
 
@@ -100,4 +94,3 @@ function valdata($g, $fixed_size=false) {
 		die(track('Request too long'));
 	}
 }
-?>

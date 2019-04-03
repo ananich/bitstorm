@@ -21,11 +21,7 @@
  ** Configuration start **
  *************************/
 
-//MySQL details
-define('__DB_SERVER', 'localhost');
-define('__DB_USERNAME', 'onesixu7_tracker');
-define('__DB_PASSWORD', 'dims4-alters');
-define('__DB_DATABASE', 'onesixu7_tracker');
+require 'constants.php';
 
 /***********************
  ** Configuration end **
@@ -46,21 +42,15 @@ table.db-table td {padding: 5px;border-left: 1px solid #ccc;border-top: 1px soli
 <body>
 <?php
 
-//Connect to the MySQL server
-@mysql_connect(__DB_SERVER, __DB_USERNAME, __DB_PASSWORD) or die('Database connection failed');
-
-//Select the database
-@mysql_select_db(__DB_DATABASE) or die('Unable to select database');
-
-$q = mysql_query('SELECT hash, SUM(uploaded) as uploaded, SUM(downloaded) as downloaded '
+$dbh = new PDO("mysql:host=".__DB_SERVER.";dbname=".__DB_DATABASE, __DB_USERNAME, __DB_PASSWORD) or die(track('Database connection failed'));
+$torrents_tracked = $dbh->query('SELECT hash, SUM(uploaded) as uploaded, SUM(downloaded) as downloaded '
 		. 'FROM (SELECT torrent_id, uploaded, downloaded, MAX(attempt) FROM onesixu7_tracker.peer_torrent '
 		. 'GROUP BY torrent_id, peer_id) as X JOIN torrent ON X.torrent_id = torrent.id '
-		. 'GROUP BY torrent_id LIMIT 1000') or die(mysql_error());
-
-if(mysql_num_rows($q)) {
+		. 'GROUP BY torrent_id LIMIT 1000');
+if( $torrents_tracked->rowCount()> 0) {
 	echo '<table cellpadding="0" cellspacing="0" class="db-table">';
 	echo '<tr><th>Hash</th><th>Uploaded</th><th>Downloaded</th></tr>';
-	while($r = mysql_fetch_row($q)) {
+	while($r = $torrents_tracked->fetch(PDO::FETCH_NUM)) {
 		echo '<tr>';
 		echo '<td>',$r[0],'</td>';
 		echo '<td>',formatBytes($r[1]),'</td>';
@@ -83,3 +73,4 @@ function formatBytes($size) {
 ?>
 </body>
 </html>
+
