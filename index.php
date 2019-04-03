@@ -44,7 +44,7 @@ table.db-table td {padding: 5px;border-left: 1px solid #ccc;border-top: 1px soli
 
 $dbh = new PDO("mysql:host=".__DB_SERVER.";dbname=".__DB_DATABASE, __DB_USERNAME, __DB_PASSWORD) or die(track('Database connection failed'));
 $torrents_tracked = $dbh->query('SELECT hash, SUM(uploaded) as uploaded, SUM(downloaded) as downloaded '
-		. 'FROM (SELECT torrent_id, uploaded, downloaded, MAX(attempt) FROM onesixu7_tracker.peer_torrent '
+		. 'FROM (SELECT torrent_id, uploaded, downloaded, MAX(attempt) FROM peer_torrent '
 		. 'GROUP BY torrent_id, peer_id) as X JOIN torrent ON X.torrent_id = torrent.id '
 		. 'GROUP BY torrent_id LIMIT 1000');
 if( $torrents_tracked->rowCount()> 0) {
